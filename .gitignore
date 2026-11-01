@@ -31,3 +31,5 @@ conf/conf.ini
 .vscode/
 
 dist/
+__pycache__/
+*.pyc

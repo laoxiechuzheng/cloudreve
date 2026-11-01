@@ -1,0 +1,99 @@
+name: Custom build
+
+on:
+  push:
+    branches: [custom/3.8.3]
+    tags: ['v3.8.3-custom.*']
+  pull_request:
+    branches: [custom/3.8.3]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: custom-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.19.5'
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.20.14'
+          cache: true
+      - name: Restore locked frontend dependencies
+        working-directory: assets
+        env:
+          HUSKY_SKIP_INSTALL: '1'
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+          yarn install --frozen-lockfile --ignore-engines --non-interactive --registry https://registry.npmjs.org --network-concurrency 4 --network-timeout 120000
+      - name: Test deployment tooling
+        run: python3 -m unittest discover -s deploy/tests -v
+      - name: Test share routing
+        run: node --test assets/scripts/*.test.cjs
+      - name: Test frontend
+        working-directory: assets
+        env:
+          CI: 'true'
+        run: yarn test --watchAll=false --runInBand
+      - name: Build embedded frontend
+        working-directory: assets
+        env:
+          CI: 'false'
+          GENERATE_SOURCEMAP: 'false'
+          NODE_OPTIONS: '--openssl-legacy-provider --max-old-space-size=4096'
+        run: |
+          export REACT_APP_UI_VERSION="$(git rev-parse HEAD)"
+          yarn build
+      - name: Package embedded resources
+        run: python3 scripts/package-release.py assets
+      - name: Test backend
+        run: go test -mod=readonly -timeout 10m ./...
+      - name: Compile release binaries
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+        run: |
+          for arch in amd64 arm64; do
+            mkdir -p "dist/$arch"
+            GOARCH="$arch" go build -mod=readonly -trimpath -ldflags "-s -w -X github.com/cloudreve/Cloudreve/v3/pkg/conf.LastCommit=${GITHUB_SHA:0:8}" -o "dist/$arch/cloudreve" .
+          done
+          python3 scripts/package-release.py release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cloudreve-custom
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+  release:
+    if: startsWith(github.ref, 'refs/tags/v3.8.3-custom.')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cloudreve-custom
+          path: dist
+      - name: Publish immutable versioned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/*.tar.gz dist/SHA256SUMS --verify-tag --title "Cloudreve $RELEASE_TAG" --notes 'Cloudreve 3.8.3 with custom UI, embedded frontend, systemd operation and portable data export/restore. Verify SHA256SUMS before deployment. See the repository deployment guide.'
