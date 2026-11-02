@@ -112,7 +112,7 @@ func TestCheckShareKeyAvailable(t *testing.T) {
 
 	// 格式不对
 	for _, key := range []string{"", "a b", "a/b", "中文", strings.Repeat("a", 65)} {
-		asserts.ErrorIs(CheckShareKeyAvailable(key, 2), ErrShareKeyInvalid, key)
+		asserts.ErrorIs(CheckShareKeyAvailable(key, 2), ErrLinkKeyInvalid, key)
 	}
 
 	// 普通自定义链接，未被占用
@@ -130,9 +130,9 @@ func TestCheckShareKeyAvailable(t *testing.T) {
 			WithArgs("98k-win", 2).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "source_name"}).AddRow(7, "old.exe"))
 		err := CheckShareKeyAvailable("98k-win", 2)
-		var taken ShareKeyTakenError
+		var taken LinkKeyTakenError
 		asserts.ErrorAs(err, &taken)
-		asserts.Equal("old.exe", taken.By.SourceName)
+		asserts.Equal("old.exe", taken.Name)
 		asserts.NoError(mock.ExpectationsWereMet())
 	}
 
@@ -140,7 +140,7 @@ func TestCheckShareKeyAvailable(t *testing.T) {
 	{
 		mock.ExpectQuery("SELECT(.+)").
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-		var taken ShareKeyTakenError
+		var taken LinkKeyTakenError
 		asserts.ErrorAs(CheckShareKeyAvailable("jRfM", 2), &taken)
 		asserts.NoError(mock.ExpectationsWereMet())
 	}
@@ -164,7 +164,7 @@ func TestCheckShareKeyAvailable(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"id"}))
 		mock.ExpectQuery("SELECT(.+)").
 			WillReturnRows(sqlmock.NewRows([]string{"id"}))
-		asserts.ErrorIs(CheckShareKeyAvailable("jRfM", 2), ErrShareKeyInvalid)
+		asserts.ErrorIs(CheckShareKeyAvailable("jRfM", 2), ErrLinkKeyInvalid)
 		asserts.NoError(mock.ExpectationsWereMet())
 	}
 
@@ -218,7 +218,7 @@ func TestShare_SetCustomKey(t *testing.T) {
 		mock.ExpectQuery("SELECT(.+)custom_key(.+)").
 			WithArgs("98k-win", 2).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
-		var taken ShareKeyTakenError
+		var taken LinkKeyTakenError
 		asserts.ErrorAs(share.SetCustomKey("98k-win"), &taken)
 		asserts.Equal("", share.CustomKey)
 		asserts.NoError(mock.ExpectationsWereMet())

@@ -1,7 +1,9 @@
 package routers
 
 import (
+	"github.com/cloudreve/Cloudreve/v3/pkg/auth"
 	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
+	"github.com/cloudreve/Cloudreve/v3/pkg/hashid"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -248,4 +250,52 @@ func TestSiteConfigRoute(t *testing.T) {
 			ID: 2,
 		},
 	}).UpdateColumn("name", "siteName")
+}
+
+func TestSourceLinkRoute(t *testing.T) {
+	switchToMemDB()
+	asserts := assert.New(t)
+	router := InitMasterRouter()
+	// 跳转地址需要签名
+	auth.General = auth.HMACAuth{SecretKey: []byte("test")}
+
+	file := model.File{Name: "deploy-new.sh", SourceName: "deploy-new.sh", UserID: 1, FolderID: 1, PolicyID: 1}
+	asserts.NoError(model.DB.Create(&file).Error)
+	link := model.SourceLink{FileID: file.ID, Name: "deploy-old.sh", CustomKey: "98k-win"}
+	asserts.NoError(model.DB.Create(&link).Error)
+	defer func() {
+		model.DB.Unscoped().Delete(&link)
+		model.DB.Unscoped().Delete(&file)
+	}()
+
+	get := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		router.ServeHTTP(w, req)
+		return w
+	}
+	downloads := func() int {
+		var current model.SourceLink
+		model.DB.First(&current, link.ID)
+		return current.Downloads
+	}
+
+	// 自定义标识：不检查文件名，跳转到文件
+	asserts.Equal(302, get("/f/98k-win/deploy-old.sh").Code)
+	asserts.Equal(1, downloads())
+
+	// HashID 加当前文件名仍然可用
+	asserts.Equal(302, get("/f/"+hashid.HashID(link.ID, hashid.SourceLinkID)+"/deploy-new.sh").Code)
+	asserts.Equal(2, downloads())
+
+	// HashID 加旧文件名、不存在的自定义标识都是文件不存在，而不是参数错误
+	for _, path := range []string{
+		"/f/" + hashid.HashID(link.ID, hashid.SourceLinkID) + "/deploy-old.sh",
+		"/f/no-such-key/deploy-new.sh",
+	} {
+		w := get(path)
+		asserts.Equal(200, w.Code, path)
+		asserts.Contains(w.Body.String(), "40044", path)
+	}
+	asserts.Equal(2, downloads())
 }

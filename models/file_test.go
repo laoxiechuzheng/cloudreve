@@ -697,6 +697,7 @@ func TestFile_CreateOrGetSourceLink(t *testing.T) {
 		res, err := file.CreateOrGetSourceLink()
 		a.NoError(err)
 		a.EqualValues(2, res.ID)
+		a.EqualValues(file.ID, res.File.ID)
 		a.NoError(mock.ExpectationsWereMet())
 	}
 

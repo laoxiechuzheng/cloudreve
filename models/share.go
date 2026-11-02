@@ -3,7 +3,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -44,21 +43,6 @@ func (share *Share) Create() (uint, error) {
 	return share.ID, nil
 }
 
-// shareKeyPattern 自定义分享链接允许的格式
-var shareKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-
-// ErrShareKeyInvalid 自定义分享链接格式不对，或是将来会分配给新分享的 HashID
-var ErrShareKeyInvalid = errors.New("invalid share key")
-
-// ShareKeyTakenError 自定义分享链接已被另一个分享使用
-type ShareKeyTakenError struct {
-	By *Share
-}
-
-func (e ShareKeyTakenError) Error() string {
-	return "share key is taken"
-}
-
 // GetShareByHashID 根据分享链接标识查找分享：先按 HashID 解析，找不到再匹配自定义链接
 func GetShareByHashID(hashID string) *Share {
 	var share Share
@@ -68,7 +52,7 @@ func GetShareByHashID(hashID string) *Share {
 		}
 	}
 
-	if !shareKeyPattern.MatchString(hashID) {
+	if !linkKeyPattern.MatchString(hashID) {
 		return nil
 	}
 	share = Share{}
@@ -106,8 +90,8 @@ func (share *Share) SetCustomKey(key string) error {
 
 // CheckShareKeyAvailable 检查 key 能否作为分享 exceptID 的自定义链接
 func CheckShareKeyAvailable(key string, exceptID uint) error {
-	if !shareKeyPattern.MatchString(key) {
-		return ErrShareKeyInvalid
+	if !linkKeyPattern.MatchString(key) {
+		return ErrLinkKeyInvalid
 	}
 
 	// 与某个分享的 HashID 相同时，访问会先按 HashID 解析：
@@ -115,17 +99,17 @@ func CheckShareKeyAvailable(key string, exceptID uint) error {
 	if id, err := hashid.DecodeHashID(key, hashid.ShareID); err == nil && id != exceptID {
 		var owner Share
 		if DB.First(&owner, id).Error == nil {
-			return ShareKeyTakenError{By: &owner}
+			return LinkKeyTakenError{Name: owner.SourceName}
 		}
 		var last Share
 		if DB.Unscoped().Order("id desc").First(&last).Error != nil || id > last.ID {
-			return ErrShareKeyInvalid
+			return ErrLinkKeyInvalid
 		}
 	}
 
 	var other Share
 	if DB.Where("custom_key = ? AND id <> ?", key, exceptID).First(&other).Error == nil {
-		return ShareKeyTakenError{By: &other}
+		return LinkKeyTakenError{Name: other.SourceName}
 	}
 	return nil
 }

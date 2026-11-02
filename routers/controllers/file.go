@@ -149,6 +149,17 @@ func GetSource(c *gin.Context) {
 	}
 }
 
+// SetSourceKey 设置文件外链的自定义标识
+func SetSourceKey(c *gin.Context) {
+	var service explorer.SourceKeyService
+	if err := c.ShouldBindJSON(&service); err == nil {
+		res := service.Set(c, CurrentUser(c))
+		c.JSON(200, res)
+	} else {
+		c.JSON(200, ErrorResponse(err))
+	}
+}
+
 // Thumb 获取文件缩略图
 func Thumb(c *gin.Context) {
 	// 创建上下文

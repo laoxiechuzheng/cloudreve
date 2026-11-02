@@ -18,6 +18,7 @@ type ShareCreateService struct {
 	RemainDownloads int    `json:"downloads"`
 	Expire          int    `json:"expire"`
 	Preview         bool   `json:"preview"`
+	CustomKey       string `json:"custom_key" binding:"max=64"` // 自定义分享链接，空值表示使用 HashID
 }
 
 // ShareUpdateService 分享更新服务
@@ -62,7 +63,7 @@ func (service *ShareUpdateService) Update(c *gin.Context) serializer.Response {
 		}
 	case "custom_key":
 		if err := share.SetCustomKey(service.Value); err != nil {
-			return serializer.ShareKeyErr(err)
+			return serializer.LinkKeyErr(err)
 		}
 		return serializer.Response{
 			Data: share.Key(),
@@ -119,6 +120,13 @@ func (service *ShareCreateService) Create(c *gin.Context) serializer.Response {
 		return serializer.Err(serializer.CodeNotFound, "", nil)
 	}
 
+	// 自定义链接在写入前检查，新分享尚无 ID
+	if service.CustomKey != "" {
+		if err := model.CheckShareKeyAvailable(service.CustomKey, 0); err != nil {
+			return serializer.LinkKeyErr(err)
+		}
+	}
+
 	newShare := model.Share{
 		Password:        service.Password,
 		IsDir:           service.IsDir,
@@ -127,6 +135,7 @@ func (service *ShareCreateService) Create(c *gin.Context) serializer.Response {
 		RemainDownloads: -1,
 		PreviewEnabled:  service.Preview,
 		SourceName:      sourceName,
+		CustomKey:       service.CustomKey,
 	}
 
 	// 如果开启了自动过期
@@ -137,16 +146,13 @@ func (service *ShareCreateService) Create(c *gin.Context) serializer.Response {
 	}
 
 	// 创建分享
-	id, err := newShare.Create()
-	if err != nil {
+	if _, err := newShare.Create(); err != nil {
 		return serializer.DBErr("Failed to create share link record", err)
 	}
 
-	// 获取分享的唯一id
-	uid := hashid.HashID(id, hashid.ShareID)
-	// 最终得到分享链接
+	// 最终得到分享链接（有自定义链接时用自定义链接，否则用 HashID）
 	siteURL := model.GetSiteURL()
-	sharePath, _ := url.Parse("/s/" + uid)
+	sharePath, _ := url.Parse("/s/" + newShare.Key())
 	shareURL := siteURL.ResolveReference(sharePath)
 
 	return serializer.Response{

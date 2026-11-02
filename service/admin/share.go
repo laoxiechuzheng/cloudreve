@@ -34,7 +34,7 @@ func (service *ShareKeyService) Set() serializer.Response {
 		return serializer.Err(serializer.CodeShareLinkNotFound, "", err)
 	}
 	if err := share.SetCustomKey(service.Key); err != nil {
-		return serializer.ShareKeyErr(err)
+		return serializer.LinkKeyErr(err)
 	}
 	return serializer.Response{Data: share.Key()}
 }

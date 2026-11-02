@@ -410,8 +410,11 @@ func (file *File) CanCopy() bool {
 // model will be returned.
 func (file *File) CreateOrGetSourceLink() (*SourceLink, error) {
 	res := &SourceLink{}
-	err := DB.Set("gorm:auto_preload", true).Where("file_id = ?", file.ID).Find(&res).Error
+	// 不用 gorm:auto_preload：File.Policy 的 PRELOAD 标签无法解析，预加载总会报错，
+	// 已有外链会被当成没找到，再整行 Save 一遍
+	err := DB.Where("file_id = ?", file.ID).First(res).Error
 	if err == nil && res.ID > 0 {
+		res.File = *file
 		return res, nil
 	}
 

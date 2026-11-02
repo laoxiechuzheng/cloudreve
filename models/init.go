@@ -103,5 +103,5 @@ func Init() {
 
 	//执行迁移
 	migration()
-	ensureShareCustomKey()
+	ensureCustomLinkKeys()
 }

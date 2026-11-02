@@ -47,16 +47,16 @@ type myShareItem struct {
 	Source          *shareSource `json:"source,omitempty"`
 }
 
-// ShareKeyErr 把设置自定义分享链接时的错误转为响应
-func ShareKeyErr(err error) Response {
-	var taken model.ShareKeyTakenError
+// LinkKeyErr 把设置自定义链接（分享、外链）时的错误转为响应
+func LinkKeyErr(err error) Response {
+	var taken model.LinkKeyTakenError
 	switch {
-	case errors.Is(err, model.ErrShareKeyInvalid):
-		return Err(CodeShareKeyInvalid, "", nil)
+	case errors.Is(err, model.ErrLinkKeyInvalid):
+		return Err(CodeLinkKeyInvalid, "", nil)
 	case errors.As(err, &taken):
-		return Err(CodeShareKeyTaken, taken.By.SourceName, nil)
+		return Err(CodeLinkKeyTaken, taken.Name, nil)
 	}
-	return DBErr("Failed to update share record", err)
+	return DBErr("Failed to update link record", err)
 }
 
 // BuildShareList 构建我的分享列表响应

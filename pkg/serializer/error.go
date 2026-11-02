@@ -192,10 +192,10 @@ const (
 	CodeDisabledSharePreview = 40070
 	// 签名无效
 	CodeInvalidSign = 40071
-	// 自定义分享链接格式不对或不可用
-	CodeShareKeyInvalid = 40072
-	// 自定义分享链接已被其他分享使用
-	CodeShareKeyTaken = 40073
+	// 自定义链接（分享、外链）格式不对或不可用
+	CodeLinkKeyInvalid = 40072
+	// 自定义链接已被其他分享或外链使用
+	CodeLinkKeyTaken = 40073
 	// CodeDBError 数据库操作失败
 	CodeDBError = 50001
 	// CodeEncryptError 加密失败

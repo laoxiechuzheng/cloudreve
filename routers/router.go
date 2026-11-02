@@ -151,7 +151,6 @@ func InitMasterRouter() *gin.Engine {
 		source := r.Group("f")
 		{
 			source.GET(":id/:name",
-				middleware.HashID(hashid.SourceLinkID),
 				middleware.ValidateSourceLink(),
 				controllers.AnonymousPermLink)
 		}
@@ -633,6 +632,8 @@ func InitMasterRouter() *gin.Engine {
 				file.GET("thumb/:id", controllers.Thumb)
 				// 取得文件外链
 				file.POST("source", controllers.GetSource)
+				// 设置文件外链的自定义标识
+				file.PATCH("source", controllers.SetSourceKey)
 				// 打包要下载的文件
 				file.POST("archive", controllers.Archive)
 				// 创建文件压缩任务

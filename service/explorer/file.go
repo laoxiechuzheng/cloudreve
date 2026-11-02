@@ -17,6 +17,7 @@ import (
 	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
 	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem"
 	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
+	"github.com/cloudreve/Cloudreve/v3/pkg/hashid"
 	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
 	"github.com/cloudreve/Cloudreve/v3/pkg/wopi"
 	"github.com/gin-gonic/gin"
@@ -531,4 +532,46 @@ func (s *ItemIDService) Sources(ctx context.Context, c *gin.Context) serializer.
 		Code: 0,
 		Data: res,
 	}
+}
+
+// SourceKeyService 设置文件外链的自定义标识
+type SourceKeyService struct {
+	ID  string `json:"id" binding:"required"`
+	Key string `json:"key" binding:"max=64"`
+}
+
+// Set 设置文件外链的自定义标识，Key 为空时恢复为 HashID 链接；返回新的外链地址
+func (service *SourceKeyService) Set(c *gin.Context, user *model.User) serializer.Response {
+	// 只有中转外链（/f/）才有可自定义的标识
+	if !user.Group.OptionsSerialized.RedirectedSource {
+		return serializer.Err(serializer.CodeGroupNotAllowed, "", nil)
+	}
+	// 与 POST /file/source 保持一致：外链数量上限为 0 的用户组不能获取外链
+	if user.Group.OptionsSerialized.SourceBatchSize < 1 {
+		return serializer.Err(serializer.CodeBatchSourceSize, "", nil)
+	}
+
+	fileID, err := hashid.DecodeHashID(service.ID, hashid.FileID)
+	if err != nil {
+		return serializer.Err(serializer.CodeFileNotFound, "", err)
+	}
+	files, err := model.GetFilesByIDs([]uint{fileID}, user.ID)
+	if err != nil || len(files) == 0 {
+		return serializer.Err(serializer.CodeFileNotFound, "", err)
+	}
+
+	source, err := files[0].CreateOrGetSourceLink()
+	if err != nil {
+		return serializer.DBErr("Failed to create source link record", err)
+	}
+	if err := source.SetCustomKey(service.Key); err != nil {
+		return serializer.LinkKeyErr(err)
+	}
+
+	sourceURL, err := source.Link()
+	if err != nil {
+		return serializer.Err(serializer.CodeNotSet, err.Error(), err)
+	}
+
+	return serializer.Response{Data: sourceURL}
 }
