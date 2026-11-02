@@ -65,6 +65,19 @@ func migration() {
 
 }
 
+// ensureShareCustomKey 为已有数据库补上 shares.custom_key 列和索引。
+// 不改数据库版本号；换回上游二进制时该列被忽略，分享回到 HashID 链接。
+func ensureShareCustomKey() {
+	scope := DB.NewScope(&Share{})
+	if scope.Dialect().HasColumn(scope.TableName(), "custom_key") {
+		return
+	}
+	if err := DB.AutoMigrate(&Share{}).Error; err != nil {
+		util.Log().Panic("Failed to add custom share key column: %s", err)
+	}
+	util.Log().Info("Added custom share key column.")
+}
+
 func addDefaultPolicy() {
 	_, err := GetPolicyByID(uint(1))
 	// 未找到初始存储策略时，则创建

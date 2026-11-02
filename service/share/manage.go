@@ -22,7 +22,7 @@ type ShareCreateService struct {
 
 // ShareUpdateService 分享更新服务
 type ShareUpdateService struct {
-	Prop  string `json:"prop" binding:"required,eq=password|eq=preview_enabled"`
+	Prop  string `json:"prop" binding:"required,eq=password|eq=preview_enabled|eq=custom_key"`
 	Value string `json:"value" binding:"max=255"`
 }
 
@@ -59,6 +59,13 @@ func (service *ShareUpdateService) Update(c *gin.Context) serializer.Response {
 		}
 		return serializer.Response{
 			Data: value,
+		}
+	case "custom_key":
+		if err := share.SetCustomKey(service.Value); err != nil {
+			return serializer.ShareKeyErr(err)
+		}
+		return serializer.Response{
+			Data: share.Key(),
 		}
 	}
 	return serializer.Response{

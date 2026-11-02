@@ -378,6 +378,17 @@ func AdminListShare(c *gin.Context) {
 	}
 }
 
+// AdminSetShareKey 设置分享的自定义链接
+func AdminSetShareKey(c *gin.Context) {
+	var service admin.ShareKeyService
+	if err := c.ShouldBindJSON(&service); err == nil {
+		res := service.Set()
+		c.JSON(200, res)
+	} else {
+		c.JSON(200, ErrorResponse(err))
+	}
+}
+
 // AdminDeleteShare 批量删除分享
 func AdminDeleteShare(c *gin.Context) {
 	var service admin.ShareBatchService

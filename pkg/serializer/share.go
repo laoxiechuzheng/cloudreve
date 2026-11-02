@@ -1,6 +1,7 @@
 package serializer
 
 import (
+	"errors"
 	"time"
 
 	model "github.com/cloudreve/Cloudreve/v3/models"
@@ -46,13 +47,25 @@ type myShareItem struct {
 	Source          *shareSource `json:"source,omitempty"`
 }
 
+// ShareKeyErr 把设置自定义分享链接时的错误转为响应
+func ShareKeyErr(err error) Response {
+	var taken model.ShareKeyTakenError
+	switch {
+	case errors.Is(err, model.ErrShareKeyInvalid):
+		return Err(CodeShareKeyInvalid, "", nil)
+	case errors.As(err, &taken):
+		return Err(CodeShareKeyTaken, taken.By.SourceName, nil)
+	}
+	return DBErr("Failed to update share record", err)
+}
+
 // BuildShareList 构建我的分享列表响应
 func BuildShareList(shares []model.Share, total int) Response {
 	res := make([]myShareItem, 0, total)
 	now := time.Now().Unix()
 	for i := 0; i < len(shares); i++ {
 		item := myShareItem{
-			Key:             hashid.HashID(shares[i].ID, hashid.ShareID),
+			Key:             shares[i].Key(),
 			IsDir:           shares[i].IsDir,
 			Password:        shares[i].Password,
 			CreateDate:      shares[i].CreatedAt,
@@ -92,7 +105,7 @@ func BuildShareList(shares []model.Share, total int) Response {
 func BuildShareResponse(share *model.Share, unlocked bool) Share {
 	creator := share.Creator()
 	resp := Share{
-		Key:    hashid.HashID(share.ID, hashid.ShareID),
+		Key:    share.Key(),
 		Locked: !unlocked,
 		Creator: &shareCreator{
 			Key:       hashid.HashID(creator.ID, hashid.UserID),

@@ -523,6 +523,8 @@ func InitMasterRouter() *gin.Engine {
 					share.POST("list", controllers.AdminListShare)
 					// 删除
 					share.POST("delete", controllers.AdminDeleteShare)
+					// 设置自定义分享链接
+					share.POST("key", controllers.AdminSetShareKey)
 				}
 
 				download := admin.Group("download")

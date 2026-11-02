@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,21 +55,174 @@ func TestGetShareByHashID(t *testing.T) {
 		asserts.NotNil(res)
 	}
 
-	// 查询失败
+	// 查询失败，自定义链接也没有
 	{
 		mock.ExpectQuery("SELECT(.+)").
 			WillReturnError(errors.New("error"))
+		mock.ExpectQuery("SELECT(.+)custom_key(.+)").
+			WithArgs("x9T4").
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
 		res := GetShareByHashID("x9T4")
 		asserts.NoError(mock.ExpectationsWereMet())
 		asserts.Nil(res)
 	}
 
-	// ID解码失败
+	// HashID 对应的分享已删除，按自定义链接找到另一个分享
 	{
-		res := GetShareByHashID("empty")
+		mock.ExpectQuery("SELECT(.+)").
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		mock.ExpectQuery("SELECT(.+)custom_key(.+)").
+			WithArgs("x9T4").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "custom_key"}).AddRow(5, "x9T4"))
+		res := GetShareByHashID("x9T4")
+		asserts.NoError(mock.ExpectationsWereMet())
+		asserts.EqualValues(5, res.ID)
+	}
+
+	// 不是 HashID，按自定义链接查找
+	{
+		mock.ExpectQuery("SELECT(.+)custom_key(.+)").
+			WithArgs("98k-win").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "custom_key"}).AddRow(3, "98k-win"))
+		res := GetShareByHashID("98k-win")
+		asserts.NoError(mock.ExpectationsWereMet())
+		asserts.EqualValues(3, res.ID)
+	}
+
+	// 格式不对，不查询数据库
+	{
+		res := GetShareByHashID("a/b")
+		asserts.NoError(mock.ExpectationsWereMet())
 		asserts.Nil(res)
 	}
 
+}
+
+func TestShare_Key(t *testing.T) {
+	asserts := assert.New(t)
+	conf.SystemConfig.HashIDSalt = ""
+
+	asserts.Equal("jRfM", (&Share{Model: gorm.Model{ID: 1}}).Key())
+	asserts.Equal("98k-win", (&Share{Model: gorm.Model{ID: 1}, CustomKey: "98k-win"}).Key())
+}
+
+func TestCheckShareKeyAvailable(t *testing.T) {
+	asserts := assert.New(t)
+	conf.SystemConfig.HashIDSalt = ""
+
+	// 格式不对
+	for _, key := range []string{"", "a b", "a/b", "中文", strings.Repeat("a", 65)} {
+		asserts.ErrorIs(CheckShareKeyAvailable(key, 2), ErrShareKeyInvalid, key)
+	}
+
+	// 普通自定义链接，未被占用
+	{
+		mock.ExpectQuery("SELECT(.+)custom_key(.+)").
+			WithArgs("98k-win", 2).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		asserts.NoError(CheckShareKeyAvailable("98k-win", 2))
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
+
+	// 已被另一个分享的自定义链接占用
+	{
+		mock.ExpectQuery("SELECT(.+)custom_key(.+)").
+			WithArgs("98k-win", 2).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "source_name"}).AddRow(7, "old.exe"))
+		err := CheckShareKeyAvailable("98k-win", 2)
+		var taken ShareKeyTakenError
+		asserts.ErrorAs(err, &taken)
+		asserts.Equal("old.exe", taken.By.SourceName)
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
+
+	// 是仍在使用的分享 1 的 HashID
+	{
+		mock.ExpectQuery("SELECT(.+)").
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+		var taken ShareKeyTakenError
+		asserts.ErrorAs(CheckShareKeyAvailable("jRfM", 2), &taken)
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
+
+	// 是已删除分享 1 的 HashID：可以用
+	{
+		mock.ExpectQuery("SELECT(.+)").
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		mock.ExpectQuery("SELECT(.+)").
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(3))
+		mock.ExpectQuery("SELECT(.+)custom_key(.+)").
+			WithArgs("jRfM", 2).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		asserts.NoError(CheckShareKeyAvailable("jRfM", 2))
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
+
+	// 是尚未分配的分享 ID 的 HashID：将来会被新分享抢走，不能用
+	{
+		mock.ExpectQuery("SELECT(.+)").
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		mock.ExpectQuery("SELECT(.+)").
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		asserts.ErrorIs(CheckShareKeyAvailable("jRfM", 2), ErrShareKeyInvalid)
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
+
+	// 就是本分享自己的 HashID
+	{
+		mock.ExpectQuery("SELECT(.+)custom_key(.+)").
+			WithArgs("jRfM", 1).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		asserts.NoError(CheckShareKeyAvailable("jRfM", 1))
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
+}
+
+func TestShare_SetCustomKey(t *testing.T) {
+	asserts := assert.New(t)
+	conf.SystemConfig.HashIDSalt = ""
+
+	// 设置
+	{
+		share := Share{Model: gorm.Model{ID: 2}}
+		mock.ExpectQuery("SELECT(.+)custom_key(.+)").
+			WithArgs("98k-win", 2).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		mock.ExpectBegin()
+		mock.ExpectExec("UPDATE(.+)custom_key(.+)").
+			WithArgs("98k-win", sqlmock.AnyArg(), 2).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+		asserts.NoError(share.SetCustomKey("98k-win"))
+		asserts.Equal("98k-win", share.Key())
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
+
+	// 设为自己的 HashID 等于清除，不做占用检查
+	{
+		share := Share{Model: gorm.Model{ID: 1}, CustomKey: "98k-win"}
+		mock.ExpectBegin()
+		mock.ExpectExec("UPDATE(.+)custom_key(.+)").
+			WithArgs("", sqlmock.AnyArg(), 1).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+		asserts.NoError(share.SetCustomKey("jRfM"))
+		asserts.Equal("", share.CustomKey)
+		asserts.Equal("jRfM", share.Key())
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
+
+	// 被占用时不写数据库
+	{
+		share := Share{Model: gorm.Model{ID: 2}}
+		mock.ExpectQuery("SELECT(.+)custom_key(.+)").
+			WithArgs("98k-win", 2).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
+		var taken ShareKeyTakenError
+		asserts.ErrorAs(share.SetCustomKey("98k-win"), &taken)
+		asserts.Equal("", share.CustomKey)
+		asserts.NoError(mock.ExpectationsWereMet())
+	}
 }
 
 func TestShare_IsAvailable(t *testing.T) {

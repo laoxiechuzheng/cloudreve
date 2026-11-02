@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	model "github.com/cloudreve/Cloudreve/v3/models"
-	"github.com/cloudreve/Cloudreve/v3/pkg/hashid"
 	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
 	"github.com/gin-gonic/gin"
 )
@@ -20,6 +19,24 @@ func (service *ShareBatchService) Delete(c *gin.Context) serializer.Response {
 		return serializer.DBErr("Failed to delete share record", err)
 	}
 	return serializer.Response{}
+}
+
+// ShareKeyService 设置分享的自定义链接
+type ShareKeyService struct {
+	ID  uint   `json:"id" binding:"required"`
+	Key string `json:"key" binding:"max=64"`
+}
+
+// Set 设置自定义链接，Key 为空时恢复为 HashID 链接
+func (service *ShareKeyService) Set() serializer.Response {
+	var share model.Share
+	if err := model.DB.First(&share, service.ID).Error; err != nil {
+		return serializer.Err(serializer.CodeShareLinkNotFound, "", err)
+	}
+	if err := share.SetCustomKey(service.Key); err != nil {
+		return serializer.ShareKeyErr(err)
+	}
+	return serializer.Response{Data: share.Key()}
 }
 
 // Shares 列出分享
@@ -56,7 +73,7 @@ func (service *AdminListService) Shares() serializer.Response {
 	hashIDs := make(map[uint]string, len(res))
 	for _, file := range res {
 		users[file.UserID] = model.User{}
-		hashIDs[file.ID] = hashid.HashID(file.ID, hashid.ShareID)
+		hashIDs[file.ID] = file.Key()
 	}
 
 	userIDs := make([]uint, 0, len(users))

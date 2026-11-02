@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ type Share struct {
 	Expires         *time.Time // 过期时间，空值表示无过期时间
 	PreviewEnabled  bool       // 是否允许直接预览
 	SourceName      string     `gorm:"index:source"` // 用于搜索的字段
+	CustomKey       string     `gorm:"index:custom_key"` // 自定义分享链接（/s/ 之后的部分），空值表示使用 HashID
 
 	// 数据库忽略字段
 	User   User   `gorm:"PRELOAD:false,association_autoupdate:false"`
@@ -42,19 +44,90 @@ func (share *Share) Create() (uint, error) {
 	return share.ID, nil
 }
 
-// GetShareByHashID 根据HashID查找分享
+// shareKeyPattern 自定义分享链接允许的格式
+var shareKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// ErrShareKeyInvalid 自定义分享链接格式不对，或是将来会分配给新分享的 HashID
+var ErrShareKeyInvalid = errors.New("invalid share key")
+
+// ShareKeyTakenError 自定义分享链接已被另一个分享使用
+type ShareKeyTakenError struct {
+	By *Share
+}
+
+func (e ShareKeyTakenError) Error() string {
+	return "share key is taken"
+}
+
+// GetShareByHashID 根据分享链接标识查找分享：先按 HashID 解析，找不到再匹配自定义链接
 func GetShareByHashID(hashID string) *Share {
-	id, err := hashid.DecodeHashID(hashID, hashid.ShareID)
-	if err != nil {
+	var share Share
+	if id, err := hashid.DecodeHashID(hashID, hashid.ShareID); err == nil {
+		if DB.First(&share, id).Error == nil {
+			return &share
+		}
+	}
+
+	if !shareKeyPattern.MatchString(hashID) {
 		return nil
 	}
-	var share Share
-	result := DB.First(&share, id)
-	if result.Error != nil {
+	share = Share{}
+	if DB.Where("custom_key = ?", hashID).First(&share).Error != nil {
 		return nil
 	}
 
 	return &share
+}
+
+// Key 返回分享链接中使用的标识：有自定义链接时用自定义链接，否则用 HashID
+func (share *Share) Key() string {
+	if share.CustomKey != "" {
+		return share.CustomKey
+	}
+	return hashid.HashID(share.ID, hashid.ShareID)
+}
+
+// SetCustomKey 设置自定义分享链接；key 为空或等于 HashID 时恢复为 HashID 链接
+func (share *Share) SetCustomKey(key string) error {
+	if key == hashid.HashID(share.ID, hashid.ShareID) {
+		key = ""
+	}
+	if key != "" {
+		if err := CheckShareKeyAvailable(key, share.ID); err != nil {
+			return err
+		}
+	}
+	if err := DB.Model(share).Update("custom_key", key).Error; err != nil {
+		return err
+	}
+	share.CustomKey = key
+	return nil
+}
+
+// CheckShareKeyAvailable 检查 key 能否作为分享 exceptID 的自定义链接
+func CheckShareKeyAvailable(key string, exceptID uint) error {
+	if !shareKeyPattern.MatchString(key) {
+		return ErrShareKeyInvalid
+	}
+
+	// 与某个分享的 HashID 相同时，访问会先按 HashID 解析：
+	// 只有那个分享已被删除（ID 不会再分配）才可以用；尚未分配的 ID 将来会被新分享抢走。
+	if id, err := hashid.DecodeHashID(key, hashid.ShareID); err == nil && id != exceptID {
+		var owner Share
+		if DB.First(&owner, id).Error == nil {
+			return ShareKeyTakenError{By: &owner}
+		}
+		var last Share
+		if DB.Unscoped().Order("id desc").First(&last).Error != nil || id > last.ID {
+			return ErrShareKeyInvalid
+		}
+	}
+
+	var other Share
+	if DB.Where("custom_key = ? AND id <> ?", key, exceptID).First(&other).Error == nil {
+		return ShareKeyTakenError{By: &other}
+	}
+	return nil
 }
 
 // IsAvailable 返回此分享是否可用（是否过期）
