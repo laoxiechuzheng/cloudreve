@@ -2,8 +2,19 @@ package model
 
 import (
 	"encoding/json"
+
+	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 	"github.com/jinzhu/gorm"
 )
+
+// NodeKeyMinLength 节点通信密钥的最短长度，与从机配置 Secret 的 gte=64 和后台生成的 64 位密钥一致。
+// 更短（包括空）的密钥视为未配置：空密钥的 HMAC 签名谁都能算出来。
+const NodeKeyMinLength = 64
+
+// NewNodeKey 生成一个节点通信密钥
+func NewNodeKey() string {
+	return util.RandStringRunes(NodeKeyMinLength)
+}
 
 // Node 从机节点信息模型
 type Node struct {

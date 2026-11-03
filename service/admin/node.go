@@ -14,6 +14,17 @@ type AddNodeService struct {
 
 // Add 添加节点
 func (service *AddNodeService) Add() serializer.Response {
+	// 空或过短的通信密钥等于不验签：从机回调用的 MasterKey 由主机生成，SlaveKey 要与从机配置的 Secret 一致，只能校验
+	if len(service.Node.MasterKey) < model.NodeKeyMinLength {
+		service.Node.MasterKey = model.NewNodeKey()
+	}
+	if len(service.Node.SlaveKey) < model.NodeKeyMinLength {
+		if service.Node.Type != model.MasterNodeType {
+			return serializer.ParamErr("Slave secret must be at least 64 characters", nil)
+		}
+		service.Node.SlaveKey = model.NewNodeKey()
+	}
+
 	if service.Node.ID > 0 {
 		if err := model.DB.Save(&service.Node).Error; err != nil {
 			return serializer.DBErr("Failed to save node record", err)

@@ -80,6 +80,33 @@ func ensureCustomLinkKeys() {
 	}
 }
 
+// ensureNodeKeys 给通信密钥为空或过短的节点换上随机密钥（每次启动检查）。
+// 上游创建的主节点两个密钥都是空的，而从机回调接口用 MasterKey 验签，空密钥等于不验签。
+// 主节点的两个密钥没有其他用途；从机节点的 MasterKey 由主机在心跳里下发给从机，可以直接换。
+// 从机节点的 SlaveKey 必须与从机配置里的 Secret 一致，这里不动。
+func ensureNodeKeys() {
+	var nodes []Node
+	if err := DB.Find(&nodes).Error; err != nil {
+		util.Log().Panic("Failed to read nodes: %s", err)
+	}
+	for _, node := range nodes {
+		update := map[string]interface{}{}
+		if len(node.MasterKey) < NodeKeyMinLength {
+			update["master_key"] = NewNodeKey()
+		}
+		if node.Type == MasterNodeType && len(node.SlaveKey) < NodeKeyMinLength {
+			update["slave_key"] = NewNodeKey()
+		}
+		if len(update) == 0 {
+			continue
+		}
+		if err := DB.Model(&Node{}).Where("id = ?", node.ID).UpdateColumns(update).Error; err != nil {
+			util.Log().Panic("Failed to set communication keys for node %d: %s", node.ID, err)
+		}
+		util.Log().Warning("Node %d had an empty or short communication key; a random one was generated.", node.ID)
+	}
+}
+
 func addDefaultPolicy() {
 	_, err := GetPolicyByID(uint(1))
 	// 未找到初始存储策略时，则创建
@@ -204,9 +231,11 @@ func addDefaultNode() {
 
 	if gorm.IsRecordNotFoundError(err) {
 		defaultAdminGroup := Node{
-			Name:   "Master (Local machine)",
-			Status: NodeActive,
-			Type:   MasterNodeType,
+			Name:      "Master (Local machine)",
+			Status:    NodeActive,
+			Type:      MasterNodeType,
+			MasterKey: NewNodeKey(),
+			SlaveKey:  NewNodeKey(),
 			Aria2OptionsSerialized: Aria2Option{
 				Interval: 10,
 				Timeout:  10,

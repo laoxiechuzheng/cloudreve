@@ -623,6 +623,51 @@ class LifecycleTests(Fixtures):
         self.assertEqual(service.unit_path.read_text(), service.unit_text())
         self.assertTrue((self.root / ".cloudreve-manager/service.json").is_file())
 
+    def test_unit_is_sandboxed_to_the_data_root(self):
+        service, state = self.service()
+        directives = dict(line.split("=", 1) for line in service.unit_text().splitlines() if "=" in line)
+        self.assertEqual(directives["ProtectSystem"], "strict")
+        self.assertEqual(directives["ProtectHome"], "read-only")
+        self.assertEqual(directives["ReadWritePaths"], self.m.unit_quote(self.root))
+        self.assertEqual(directives["NoNewPrivileges"], "yes")
+        self.assertEqual(directives["CapabilityBoundingSet"], "")
+        self.assertNotIn("ProtectSystem", service.unit_text(hardened=False))
+
+    def test_install_service_upgrades_legacy_unit_and_restarts(self):
+        release = self.stage()
+        self.m.bind_data(self.root, release)
+        self.m.switch_current(self.root, release.name)
+        service, state = self.service()
+        put(service.unit_path, service.unit_text(hardened=False))
+        self.assertTrue(service.inspect()["legacy"])
+        state["active"] = state["enabled"] = True
+        pid = self.proc / "43210"
+        pid.mkdir()
+        (pid / "exe").symlink_to(release / "cloudreve")
+        (pid / "cwd").symlink_to(self.root, target_is_directory=True)
+        put(pid / "cgroup", "0::/system.slice/cloudreve-custom.service\n")
+        put(pid / "cmdline", b"cloudreve\x00")
+        calls = []
+        stop = service.stop
+        mock.patch.object(service, "stop", side_effect=lambda: (calls.append("stop"), stop())).start()
+        result = self.m.install_service(self.root, service)
+        self.assertTrue(result["active"])
+        self.assertEqual(calls, ["stop"])
+        self.assertEqual(service.unit_path.read_text(), service.unit_text())
+        self.assertFalse(service.inspect()["legacy"])
+
+    def test_install_service_upgrade_failure_restores_legacy_unit(self):
+        release = self.stage()
+        self.m.bind_data(self.root, release)
+        self.m.switch_current(self.root, release.name)
+        service, state = self.service()
+        legacy = service.unit_text(hardened=False)
+        put(service.unit_path, legacy)
+        state["fail_start"] = 1
+        with self.assertRaisesRegex(self.m.ManagerError, "installation failed"):
+            self.m.install_service(self.root, service)
+        self.assertEqual(service.unit_path.read_text(), legacy)
+
     def test_install_service_failure_removes_new_unit_preserving_data(self):
         release = self.stage()
         self.m.bind_data(self.root, release)

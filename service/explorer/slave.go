@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
+	"strings"
 	"time"
 
 	model "github.com/cloudreve/Cloudreve/v3/models"
 	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
 	"github.com/cloudreve/Cloudreve/v3/pkg/cluster"
+	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
 	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem"
 	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
 	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
@@ -167,6 +171,31 @@ func CreateTransferTask(c *gin.Context, req *serializer.SlaveTransferReq) serial
 	return serializer.ParamErr("未知的主机节点ID", nil)
 }
 
+// checkMasterSavePath 检查从机要写入主机的路径：会话里的存储策略必须是数据库里的本地策略，
+// 路径必须落在该策略目录规则的固定前缀（第一个 { 之前的目录）之下，并且至少在一层子目录里。
+// 主机自己生成的转存路径（目录规则 + 文件名）都满足这一点；从机伪造的绝对路径、../、
+// 以及程序目录下的 cloudreve.db、conf.ini 这类文件会被拒绝。
+func checkMasterSavePath(session *serializer.UploadSession) error {
+	policy, err := model.GetPolicyByID(session.Policy.ID)
+	if err != nil || policy.Type != "local" {
+		return errors.New("unknown storage policy")
+	}
+
+	prefix := filepath.ToSlash(policy.DirNameRule)
+	if i := strings.Index(prefix, "{"); i >= 0 {
+		prefix = prefix[:strings.LastIndex(prefix[:i], "/")+1]
+	}
+	root := filepath.Clean(util.RelativePath(filepath.FromSlash(prefix)))
+	dst := filepath.Clean(util.RelativePath(filepath.FromSlash(session.SavePath)))
+
+	rel, err := filepath.Rel(root, dst)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
+		(prefix == "" && !strings.Contains(rel, string(filepath.Separator))) || rel == "." {
+		return errors.New("save path is outside of the storage policy")
+	}
+	return nil
+}
+
 // SlaveListService 从机上传会话服务
 type SlaveCreateUploadSessionService struct {
 	Session   serializer.UploadSession `json:"session" binding:"required"`
@@ -176,6 +205,13 @@ type SlaveCreateUploadSessionService struct {
 
 // Create 从机创建上传会话
 func (service *SlaveCreateUploadSessionService) Create(ctx context.Context, c *gin.Context) serializer.Response {
+	// 主机模式下，这个接口接收从机离线下载完成后转存回主机本地策略的文件，只许写进对应策略的目录
+	if conf.SystemConfig.Mode == "master" {
+		if err := checkMasterSavePath(&service.Session); err != nil {
+			return serializer.Err(serializer.CodeNoPermissionErr, err.Error(), nil)
+		}
+	}
+
 	if !service.Overwrite && util.Exists(service.Session.SavePath) {
 		return serializer.Err(serializer.CodeConflict, "placeholder file already exist", nil)
 	}

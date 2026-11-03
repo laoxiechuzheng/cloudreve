@@ -1,24 +1,27 @@
 package util
 
 import (
-	"math/rand"
+	"crypto/rand"
+	"math/big"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
-// RandStringRunes 返回随机字符串
+// RandStringRunes 返回随机字符串。
+// 站点 secret_key、SessionSecret、HashIDSalt、节点密钥、各种令牌都用它生成，所以必须用 crypto/rand：
+// 原来的 math/rand 以启动时间为种子，种子只有 2^31 种，拿到一个签名就能离线穷举出 secret_key。
 func RandStringRunes(n int) string {
 	var letterRunes = []rune("1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	max := big.NewInt(int64(len(letterRunes)))
 
 	b := make([]rune, n)
 	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+		k, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			panic(err)
+		}
+		b[i] = letterRunes[k.Int64()]
 	}
 	return string(b)
 }
