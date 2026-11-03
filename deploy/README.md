@@ -113,9 +113,16 @@ The generated unit uses SIGTERM, a 300-second stop timeout without forced
 SIGKILL, restart on failure, journald, and boot enablement. It runs as root to
 retain compatibility with an existing root-owned installation; it does not
 create users or recursively change ownership. This is deliberately not a
-container/user-namespace service or a privilege migration. An existing unit must
-exactly match the manager's unit for this root, with no drop-ins, before it can
-be used. A foreign or modified unit is refused rather than overwritten.
+container/user-namespace service or a privilege migration. Since custom.4 the
+unit is sandboxed instead: no capabilities, `NoNewPrivileges`, `ProtectSystem=strict`,
+`ProtectHome=read-only`, `PrivateTmp`/`PrivateDevices`, and `ReadWritePaths` limited
+to the data root, so a file-write bug cannot reach `~/.ssh`, cron, systemd units or
+binaries outside the data root. An existing unit must exactly match the manager's
+unit for this root (or the pre-custom.4 unsandboxed unit, which `install-service`
+upgrades and restarts, restoring it if the restart fails), with no drop-ins,
+before it can be used. A foreign or modified unit is refused rather than
+overwritten. A manager older than custom.4 refuses the sandboxed unit, so after a
+rollback keep using `releases/3.8.3-custom.4/deploy/cloudreve-manager.py`.
 
 ## Updates, Failure Recovery, and Retention
 
